@@ -295,6 +295,9 @@ task check_output;
         // SPEC 7 : latency measured up to the falling edge of out_valid
         if (lat > MAX_LAT) report_spec(7);
         total_latency = total_latency + lat;
+`ifdef LAT_DEBUG
+        $display("shot %0d: chain=%0d lat=%0d", shot_i, g_chain, lat);
+`endif
 
         // out_valid must fall after the last expected cycle (checked by monitor)
         @(negedge clk);
