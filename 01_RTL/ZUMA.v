@@ -70,7 +70,9 @@ reg  [8:0]  lenc;            // length of the run found so far (incl. virtual be
 reg  [8:0]  room;            // beads still available to this level
 reg         ldone, rdone;
 reg         lvl1;            // first level : the shot bead is virtual
-reg  [8:0]  avail;           // beads not yet eliminated (committed levels only)
+reg  [8:0]  dcnt;            // old beads eliminated so far (committed levels only)
+reg  [8:0]  tail;            // M - dst : beads from dst to the end of the ring
+reg         allf;            // committed levels already cover the whole ring
 reg  [7:0]  dst;             // leftmost eliminated bead (old coordinates)
 reg  [6:0]  chain;           // levels committed
 
@@ -125,11 +127,9 @@ wire noelim   = (state == S_SCAN) && scan_fin && !len_ge3 && lvl1;
 wire scan_bad = (state == S_SCAN) && scan_fin && !len_ge3 && !lvl1;
 wire term_cmt = (state == S_CMT)  && !cont;
 
-wire [8:0] dcnt   = M - avail;
-wire [9:0] dend   = {2'b00, dst} + {1'b0, dcnt};
-wire       wrap_p = (dend > {1'b0, M});
-wire       all_p  = (avail == 9'd0);
-wire [8:0] sh_p   = dend[8:0] - M;
+wire       wrap_p = (dcnt > tail);          // dst + dcnt > M
+wire       all_p  = allf;
+wire [8:0] sh_p   = dcnt - tail;
 
 //---------------------------------------------------------------------
 //   RING STORAGE : insert / delete share one threshold
@@ -215,7 +215,9 @@ always @(posedge clk or negedge rst_n) begin
         ldone      <= 1'b0;
         rdone      <= 1'b0;
         lvl1       <= 1'b0;
-        avail      <= 9'd0;
+        dcnt       <= 9'd0;
+        tail       <= 9'd0;
+        allf       <= 1'b0;
         dst        <= 8'd0;
         chain      <= 7'd0;
         sst        <= 8'd0;
@@ -271,7 +273,6 @@ always @(posedge clk or negedge rst_n) begin
                             ldone <= 1'b0;
                             rdone <= 1'b0;
                             lvl1  <= 1'b1;
-                            avail <= M;
                             chain <= 7'd0;
                             state <= S_SCAN;
                         end
@@ -294,7 +295,9 @@ always @(posedge clk or negedge rst_n) begin
                 //-----------------------------------------------------
                 S_CMT: begin
                     chain <= chain_c;
-                    avail <= room;
+                    dcnt  <= M - room;
+                    tail  <= M - {1'b0, dst_n};
+                    allf  <= (room == 9'd0);
                     dst   <= dst_n;
                     if (cont) begin
                         c     <= ringL;
