@@ -83,7 +83,7 @@ reg         out_act;
 reg  [6:0]  out_rem;
 
 reg  [2:0]  lv_col [0:LV_DEPTH-1];
-reg  [8:0]  lv_cnt [0:LV_DEPTH-1];
+reg  [7:0]  lv_cnt [0:LV_DEPTH-1];   // stored as (length - 3), lengths are 3..256
 
 integer i, j;
 
@@ -173,7 +173,7 @@ end
 always @(posedge clk) begin
     if (state == S_CMT) begin
         lv_col[chain] <= c;
-        lv_cnt[chain] <= lenc;
+        lv_cnt[chain] <= lenc[7:0] - 8'd3;
     end
     else if (out_act && out_rem != 7'd0) begin
         for (j = 0; j < LV_DEPTH - 1; j = j + 1) begin
@@ -192,7 +192,7 @@ wire [6:0] cf       = term_cmt ? chain_c : (scan_bad ? chain : 7'd0);
 wire       use_cur  = term_cmt && (chain == 7'd0);
 wire       use_lv0  = (term_cmt && (chain != 7'd0)) || scan_bad;
 wire [2:0] fb_col   = use_cur ? c     : (use_lv0 ? lv_col[0] : 3'd0);
-wire [8:0] fb_cnt   = use_cur ? lenc : (use_lv0 ? lv_cnt[0] : 9'd0);
+wire [8:0] fb_cnt   = use_cur ? lenc : (use_lv0 ? ({1'b0, lv_cnt[0]} + 9'd3) : 9'd0);
 
 //---------------------------------------------------------------------
 //   CONTROL
@@ -238,7 +238,7 @@ always @(posedge clk or negedge rst_n) begin
         if (out_act) begin
             if (out_rem != 7'd0) begin
                 elim_color <= lv_col[1];
-                elim_cnt   <= lv_cnt[1];
+                elim_cnt   <= {1'b0, lv_cnt[1]} + 9'd3;
                 out_rem    <= out_rem - 7'd1;
             end
             else begin
