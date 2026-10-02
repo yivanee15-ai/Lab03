@@ -1,11 +1,30 @@
+/**************************************************************************/
+// Copyright (c) 2026, SI2 Lab
+// MODULE: PATTERN
+// FILE NAME: PATTERN.v
+// VERSRION: 1.0
+// DATE: Aug 01, 2026
+// AUTHOR: NYCU IEE
+// CODE TYPE: RTL or Behavioral Level (Verilog)
+// DESCRIPTION: 2026 Fall IC Lab / Exersise Lab03 / ZUMA
+// MODIFICATION HISTORY:
+// Date                 Description
+//
+/**************************************************************************/
 `timescale 1ns/10ps
 
+`ifdef RTL
+    `define CYCLE_TIME 15.0
+`endif
+`ifdef GATE
+    `define CYCLE_TIME 15.0
+`endif
 `ifndef CYCLE_TIME
-`define CYCLE_TIME 4.0
+    `define CYCLE_TIME 15.0
 `endif
 
-module PATTERN(
-    // Output Signals (to ZUMA)
+module PATTERN (
+    // Output
     clk,
     rst_n,
     in_valid,
@@ -14,7 +33,7 @@ module PATTERN(
     shot_valid,
     shot_color,
     shot_pos,
-    // Input Signals (from ZUMA)
+    // Input
     out_valid,
     chain_num,
     elim_color,
@@ -24,22 +43,24 @@ module PATTERN(
 //---------------------------------------------------------------------
 //   PORT DECLARATION
 //---------------------------------------------------------------------
-output reg        clk, rst_n;
-output reg        in_valid;
-output reg [7:0]  ring_len;
-output reg [2:0]  in_color;
-output reg        shot_valid;
-output reg [2:0]  shot_color;
-output reg [7:0]  shot_pos;
+output reg          clk;
+output reg          rst_n;
+output reg          in_valid;
+output reg [7:0]    ring_len;
+output reg [2:0]    in_color;
+output reg          shot_valid;
+output reg [2:0]    shot_color;
+output reg [7:0]    shot_pos;
 
-input             out_valid;
-input      [6:0]  chain_num;
-input      [2:0]  elim_color;
-input      [8:0]  elim_cnt;
+input               out_valid;
+input      [6:0]    chain_num;
+input      [2:0]    elim_color;
+input      [8:0]    elim_cnt;
 
 //---------------------------------------------------------------------
 //   PARAMETER & INTEGER DECLARATION
 //---------------------------------------------------------------------
+integer total_latency;
 real    CYCLE = `CYCLE_TIME;
 integer MAX_LAT = 1000;
 
@@ -79,7 +100,7 @@ task report_spec;
     begin
         if (!stopped) begin
             stopped = 1'b1;
-            $display("SPEC-%0d FAIL", n);
+            $display("                    SPEC-%0d FAIL                   ", n);
             $finish;
         end
     end
@@ -273,6 +294,7 @@ task check_output;
 
         // SPEC 7 : latency measured up to the falling edge of out_valid
         if (lat > MAX_LAT) report_spec(7);
+        total_latency = total_latency + lat;
 
         // out_valid must fall after the last expected cycle (checked by monitor)
         @(negedge clk);
@@ -292,6 +314,7 @@ initial begin
         $finish;
     end
     tmp_i = $fscanf(fin, "%d", pat_num);
+    total_latency = 0;
 
     reset_task;
     @(negedge clk);
@@ -316,7 +339,9 @@ initial begin
     end
 
     if (!stopped) begin
-        $display("Congratulations");
+        $display("                  Congratulations!               ");
+        $display("              total execution latency = %0d", total_latency);
+        $display("              clock period = %0.1fns", CYCLE);
         $finish;
     end
 end
