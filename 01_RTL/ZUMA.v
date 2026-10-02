@@ -45,6 +45,7 @@ localparam S_CMT   = 3'd3;   // commit one cascade level
 localparam S_INSN  = 3'd4;   // no elimination : insert the shot bead
 localparam S_APP0  = 3'd5;   // empty ring : shot bead becomes index 0
 localparam S_DEL   = 3'd6;   // delete the eliminated interval
+localparam S_PRE   = 3'd7;   // compute the delete parameters
 
 localparam LV_DEPTH = 86;    // max cascade levels (>= 3 beads each, <= 256)
 
@@ -65,10 +66,11 @@ reg  [7:0]  pos_r;
 
 reg  [2:0]  c;               // color of the level being scanned
 reg  [7:0]  lidx, ridx;      // scan pointers (old coordinates)
-reg  [8:0]  L, R;            // beads taken on each side in this level
+reg  [8:0]  lenc;            // length of the run found so far (incl. virtual bead)
+reg  [8:0]  room;            // beads still available to this level
 reg         ldone, rdone;
 reg         lvl1;            // first level : the shot bead is virtual
-reg  [8:0]  avail;           // beads not yet eliminated
+reg  [8:0]  avail;           // beads not yet eliminated (committed levels only)
 reg  [7:0]  dst;             // leftmost eliminated bead (old coordinates)
 reg  [6:0]  chain;           // levels committed
 
@@ -95,41 +97,39 @@ wire [2:0] ringR = ring[ridx];
 wire [7:0] l_dec = (lidx == 8'd0) ? Mm1 : (lidx - 8'd1);
 wire [7:0] r_inc = (ridx == Mm1)  ? 8'd0 : (ridx + 8'd1);
 
-wire [8:0] LR     = L + R;
 wire       lmatch = !ldone && (ringL == c);
 wire       rmatch = !rdone && (ringR == c);
-wire       lext   = lmatch && (LR < avail);
-wire       rext   = rmatch && ((LR + {8'd0, lext}) < avail);
-wire [8:0] L_n    = L + {8'd0, lext};
-wire [8:0] R_n    = R + {8'd0, rext};
+wire       room_nz  = |room;
+wire       room_ge2 = |room[8:1];
+wire       lext   = lmatch && room_nz;
+wire       rext   = rmatch && (lext ? room_ge2 : room_nz);
+wire [1:0] ext_n  = {lext & rext, lext ^ rext};
+wire [8:0] lenc_n = lenc + {7'd0, ext_n};
+wire [8:0] room_n = room - {7'd0, ext_n};
 wire       ldone_n = ldone | ~lext;
 wire       rdone_n = rdone | ~rext;
 wire       scan_fin = ldone_n & rdone_n;
-wire [8:0] len_n  = L_n + R_n + {8'd0, lvl1};
-wire       len_ge3 = (len_n >= 9'd3);
+wire       len_ge3 = (|lenc[8:2]) | (&lenc[1:0]) |
+                     ((lenc[1:0] == 2'd2) & (lext | rext)) |
+                     ((lenc[1:0] == 2'd1) & lext & rext);
 
 // commit stage
-wire [8:0] len_c   = LR + {8'd0, lvl1};
-wire [8:0] avail_n = avail - LR;
 wire [7:0] dst_n   = (lidx == Mm1) ? 8'd0 : (lidx + 8'd1);
 wire [6:0] chain_c = chain + 7'd1;
-wire       cont    = (avail_n >= 9'd3) && (ringL == ringR);
+wire       cont    = (room >= 9'd3) && (ringL == ringR);
 
 //---------------------------------------------------------------------
-//   TERMINATION / DELETE PARAMETERS (one shared unit)
+//   TERMINATION / DELETE PARAMETERS (computed from registers in S_PRE)
 //---------------------------------------------------------------------
 wire noelim   = (state == S_SCAN) && scan_fin && !len_ge3 && lvl1;
 wire scan_bad = (state == S_SCAN) && scan_fin && !len_ge3 && !lvl1;
 wire term_cmt = (state == S_CMT)  && !cont;
-wire del_go   = term_cmt | scan_bad;
 
-wire [7:0] dst_x  = (state == S_CMT) ? dst_n   : dst;
-wire [8:0] av_x   = (state == S_CMT) ? avail_n : avail;
-wire [8:0] dcnt_x = M - av_x;
-wire [9:0] dend   = {2'b00, dst_x} + {1'b0, dcnt_x};
-wire       wrap_x = (dend > {1'b0, M});
-wire       all_x  = (av_x == 9'd0);
-wire [8:0] sh_x   = dend[8:0] - M;
+wire [8:0] dcnt   = M - avail;
+wire [9:0] dend   = {2'b00, dst} + {1'b0, dcnt};
+wire       wrap_p = (dend > {1'b0, M});
+wire       all_p  = (avail == 9'd0);
+wire [8:0] sh_p   = dend[8:0] - M;
 
 //---------------------------------------------------------------------
 //   RING STORAGE : insert / delete share one threshold
@@ -173,7 +173,7 @@ end
 always @(posedge clk) begin
     if (state == S_CMT) begin
         lv_col[chain] <= c;
-        lv_cnt[chain] <= len_c;
+        lv_cnt[chain] <= lenc;
     end
     else if (out_act && out_rem != 7'd0) begin
         for (j = 0; j < LV_DEPTH - 1; j = j + 1) begin
@@ -192,7 +192,7 @@ wire [6:0] cf       = term_cmt ? chain_c : (scan_bad ? chain : 7'd0);
 wire       use_cur  = term_cmt && (chain == 7'd0);
 wire       use_lv0  = (term_cmt && (chain != 7'd0)) || scan_bad;
 wire [2:0] fb_col   = use_cur ? c     : (use_lv0 ? lv_col[0] : 3'd0);
-wire [8:0] fb_cnt   = use_cur ? len_c : (use_lv0 ? lv_cnt[0] : 9'd0);
+wire [8:0] fb_cnt   = use_cur ? lenc : (use_lv0 ? lv_cnt[0] : 9'd0);
 
 //---------------------------------------------------------------------
 //   CONTROL
@@ -210,8 +210,8 @@ always @(posedge clk or negedge rst_n) begin
         c          <= 3'd0;
         lidx       <= 8'd0;
         ridx       <= 8'd0;
-        L          <= 9'd0;
-        R          <= 9'd0;
+        lenc       <= 9'd0;
+        room       <= 9'd0;
         ldone      <= 1'b0;
         rdone      <= 1'b0;
         lvl1       <= 1'b0;
@@ -266,8 +266,8 @@ always @(posedge clk or negedge rst_n) begin
                             c     <= g_col;
                             lidx  <= g_pos;
                             ridx  <= (g_p1 == M) ? 8'd0 : g_p1[7:0];
-                            L     <= 9'd0;
-                            R     <= 9'd0;
+                            lenc  <= 9'd1;
+                            room  <= M;
                             ldone <= 1'b0;
                             rdone <= 1'b0;
                             lvl1  <= 1'b1;
@@ -279,8 +279,8 @@ always @(posedge clk or negedge rst_n) begin
                 end
                 //-----------------------------------------------------
                 S_SCAN: begin
-                    L     <= L_n;
-                    R     <= R_n;
+                    lenc  <= lenc_n;
+                    room  <= room_n;
                     ldone <= ldone_n;
                     rdone <= rdone_n;
                     if (lext) lidx <= l_dec;
@@ -288,17 +288,18 @@ always @(posedge clk or negedge rst_n) begin
                     if (scan_fin) begin
                         if (len_ge3)   state <= S_CMT;
                         else if (lvl1) state <= S_INSN;
+                        else           state <= S_PRE;
                     end
                 end
                 //-----------------------------------------------------
                 S_CMT: begin
                     chain <= chain_c;
-                    avail <= avail_n;
+                    avail <= room;
                     dst   <= dst_n;
                     if (cont) begin
                         c     <= ringL;
-                        L     <= 9'd1;
-                        R     <= 9'd1;
+                        lenc  <= 9'd2;
+                        room  <= room - 9'd2;
                         lidx  <= l_dec;
                         ridx  <= r_inc;
                         ldone <= 1'b0;
@@ -306,6 +307,7 @@ always @(posedge clk or negedge rst_n) begin
                         lvl1  <= 1'b0;
                         state <= S_SCAN;
                     end
+                    else state <= S_PRE;
                 end
                 //-----------------------------------------------------
                 S_INSN: begin
@@ -331,22 +333,21 @@ always @(posedge clk or negedge rst_n) begin
                         pend  <= 1'b0;
                     end
                 end
+                //-----------------------------------------------------
+                S_PRE: begin
+                    if (all_p) begin
+                        M     <= 9'd0;
+                        state <= S_IDLE;
+                    end
+                    else begin
+                        M      <= wrap_p ? {1'b0, dst} : M;
+                        sst    <= wrap_p ? 8'd0 : dst;
+                        shifts <= wrap_p ? sh_p : dcnt;
+                        state  <= S_DEL;
+                    end
+                end
                 default: state <= S_IDLE;
             endcase
-
-            // ---- eliminated interval is final : set up the deletion ----
-            if (del_go) begin
-                if (all_x) begin
-                    M     <= 9'd0;
-                    state <= S_IDLE;
-                end
-                else begin
-                    M      <= wrap_x ? {1'b0, dst_x} : M;
-                    sst    <= wrap_x ? 8'd0 : dst_x;
-                    shifts <= wrap_x ? sh_x : dcnt_x;
-                    state  <= S_DEL;
-                end
-            end
 
             // ---- start the output sequence ----
             if (out_go) begin
