@@ -16,38 +16,22 @@
 /**************************************************************************/
 
 module ZUMA (
-    // Input
-    clk,
-    rst_n,
-    in_valid,
-    ring_len,
-    in_color,
-    shot_valid,
-    shot_color,
-    shot_pos,
-    // Output
-    out_valid,
-    chain_num,
-    elim_color,
-    elim_cnt
+    input               clk,
+    input               rst_n,
+    // ---- ring loading phase ----
+    input               in_valid,
+    input      [7:0]    ring_len,
+    input      [2:0]    in_color,
+    // ---- shooting phase ----
+    input               shot_valid,
+    input      [2:0]    shot_color,
+    input      [7:0]    shot_pos,
+    // ---- outputs ----
+    output reg          out_valid,
+    output reg [6:0]    chain_num,
+    output reg [2:0]    elim_color,
+    output reg [8:0]    elim_cnt
 );
-
-//---------------------------------------------------------------------
-//   PORT DECLARATION
-//---------------------------------------------------------------------
-input             clk;
-input             rst_n;
-input             in_valid;
-input      [7:0]  ring_len;
-input      [2:0]  in_color;
-input             shot_valid;
-input      [2:0]  shot_color;
-input      [7:0]  shot_pos;
-
-output reg        out_valid;
-output reg [6:0]  chain_num;
-output reg [2:0]  elim_color;
-output reg [8:0]  elim_cnt;
 
 //---------------------------------------------------------------------
 //   PARAMETER
