@@ -70,6 +70,7 @@ reg  [8:0]  M;               // beads in the ring (old coordinates while scannin
 
 reg  [2:0]  col_r;           // saved shot
 reg  [7:0]  pos_r;
+reg  [8:0]  p1_r;            // pos_r + 1 (insert threshold)
 
 reg  [2:0]  c;               // color of the level being scanned
 reg  [7:0]  lidx, ridx;      // next bead to examine on each side (old coordinates)
@@ -132,10 +133,10 @@ wire [2:0] ro3 = bk3[ra3];
 reg  [2:0] wL0, wL1, wL2, wL3, wR0, wR1, wR2, wR3;
 always @(*) begin
     case (loff)
-        2'd0: begin wL0 = lo3; wL1 = lo2; wL2 = lo1; wL3 = lo0; end
-        2'd1: begin wL0 = lo0; wL1 = lo3; wL2 = lo2; wL3 = lo1; end
-        2'd2: begin wL0 = lo1; wL1 = lo0; wL2 = lo3; wL3 = lo2; end
-        default: begin wL0 = lo2; wL1 = lo1; wL2 = lo0; wL3 = lo3; end
+        2'd0: begin wL0 = lo0; wL1 = lo3; wL2 = lo2; wL3 = lo1; end
+        2'd1: begin wL0 = lo1; wL1 = lo0; wL2 = lo3; wL3 = lo2; end
+        2'd2: begin wL0 = lo2; wL1 = lo1; wL2 = lo0; wL3 = lo3; end
+        default: begin wL0 = lo3; wL1 = lo2; wL2 = lo1; wL3 = lo0; end
     endcase
     case (roff)
         2'd0: begin wR0 = ro0; wR1 = ro1; wR2 = ro2; wR3 = ro3; end
@@ -164,14 +165,51 @@ function [25:0] win_addr;
     end
 endfunction
 
+// left window : beads x, x-1, x-2, x-3.  bank j holds the largest index <= x with
+// index mod 4 == j, i.e. block x>>2 when j <= x mod 4, else the block before it.
+function [25:0] win_addr_l;
+    input [7:0] x;
+    reg   [5:0] base, basem;
+    reg   [1:0] off;
+    begin
+        base  = x[7:2];
+        basem = base - 6'd1;
+        off   = x[1:0];
+        win_addr_l = {(2'd3 > off) ? basem : base,
+                      (2'd2 > off) ? basem : base,
+                      (2'd1 > off) ? basem : base,
+                      (2'd0 > off) ? basem : base,
+                      off};
+    end
+endfunction
+
+// right window straight from a shot position p : beads p+1 .. p+4.
+// bank j holds block p>>2 when j > p mod 4, else the next block; the window
+// starts in bank (p+1) mod 4.
+function [25:0] win_addr_r1;
+    input [7:0] p;
+    reg   [5:0] base, base1;
+    reg   [1:0] off;
+    begin
+        base  = p[7:2];
+        base1 = base + 6'd1;
+        off   = p[1:0];
+        win_addr_r1 = {(2'd3 > off) ? base : base1,
+                       (2'd2 > off) ? base : base1,
+                       (2'd1 > off) ? base : base1,
+                       (2'd0 > off) ? base : base1,
+                       off + 2'd1};
+    end
+endfunction
+
 wire [8:0] Mm1_9 = M - 9'd1;
 wire [7:0] Mm1   = Mm1_9[7:0];
 
 // (a) start of a shot, straight from the input pins
 wire [8:0] g_p1_i = {1'b0, shot_pos} + 9'd1;
 wire       wr0_i  = (g_p1_i == M);
-wire [25:0] wl_i  = win_addr(shot_pos - 8'd3);
-wire [25:0] wr_i  = wr0_i ? win_addr(8'd0) : win_addr(g_p1_i[7:0]);
+wire [25:0] wl_i  = win_addr_l(shot_pos);
+wire [25:0] wr_i  = wr0_i ? win_addr(8'd0) : win_addr_r1(shot_pos);
 wire [2:0]  nvL_i = (shot_pos >= 8'd3) ? 3'd4 : ({1'b0, shot_pos[1:0]} + 3'd1);
 wire [8:0]  mi_i  = Mm1_9 - {1'b0, shot_pos};
 wire [2:0]  nvR_i = wr0_i ? ((M >= 9'd4) ? 3'd4 : M[2:0])
@@ -186,7 +224,7 @@ wire [7:0] gL = (state == S_START) ? pos_r :
                 (state == S_DEC)   ? l_decp : lidx;
 wire [7:0] gR = (state == S_START) ? pr1 :
                 (state == S_DEC)   ? r_incp : ridx;
-wire [25:0] wl_g  = win_addr(gL - 8'd3);
+wire [25:0] wl_g  = win_addr_l(gL);
 wire [25:0] wr_g  = win_addr(gR);
 wire [2:0]  nvL_g = (gL >= 8'd3) ? 3'd4 : ({1'b0, gL[1:0]} + 3'd1);
 wire [8:0]  mg    = M - {1'b0, gR};
@@ -270,7 +308,7 @@ wire shl    = (state == S_DEL) & ~in_valid_r;
 wire k2     = (shifts >= 9'd2);
 
 wire [8:0] thr   = ins_ld ? (loading ? M : 9'd0) :
-                   ins_n  ? ({1'b0, pos_r} + 9'd1) :
+                   ins_n  ? p1_r :
                    ins_a0 ? 9'd0 : {1'b0, sst};
 wire [2:0] wdata = ins_ld ? in_color_r : col_r;
 
@@ -359,6 +397,7 @@ always @(posedge clk or negedge rst_n) begin
         M          <= 9'd0;
         col_r      <= 3'd0;
         pos_r      <= 8'd0;
+        p1_r       <= 9'd0;
         c          <= 3'd0;
         lidx       <= 8'd0;
         ridx       <= 8'd0;
@@ -418,6 +457,7 @@ always @(posedge clk or negedge rst_n) begin
                     if (go_any) begin
                         col_r <= g_col;
                         pos_r <= g_pos;
+                        p1_r  <= g_p1;
                         if (M == 9'd0) state <= S_APP0;
                         else begin
                             c       <= g_col;
