@@ -47,7 +47,11 @@ localparam S_APP0  = 3'd5;   // empty ring : shot bead becomes index 0
 localparam S_DEL   = 3'd6;   // delete the eliminated interval
 localparam S_PRE   = 3'd7;   // compute the delete parameters
 
-localparam LV_DEPTH = 86;    // max cascade levels (>= 3 beads each, <= 256)
+// Max cascade levels one shot can trigger.  Each level removes >= 3 beads, so a
+// ring of at most 256 beads gives at most 86 levels (safe for any legal pattern).
+// A smaller value saves about 940 um^2 per level but fails if a pattern ever
+// builds a deeper cascade (nested rings of up to 128 beads need 43 levels).
+localparam LV_DEPTH = 86;
 
 //---------------------------------------------------------------------
 //   REG & WIRE DECLARATION
@@ -153,14 +157,25 @@ wire [8:0] thr   = ins_ld ? (loading ? M : 9'd0) :
                    ins_a0 ? 9'd0 : {1'b0, sst};
 wire [2:0] wdata = ins_ld ? in_color_r : col_r;
 
+// one thermometer of the threshold shared by insert and delete:
+//   ge[i] : i >= thr      gt[i] : i > thr      (i == thr) is ge & ~gt
+wire [255:0] ge;
+wire [255:0] gt = {ge[254:0], 1'b0};
+genvar gi;
+generate
+    for (gi = 0; gi < 256; gi = gi + 1) begin : g_therm
+        assign ge[gi] = (thr <= gi);
+    end
+endgenerate
+
 always @(posedge clk) begin
     for (i = 0; i < 256; i = i + 1) begin
         if (ins_op) begin
-            if (i == thr)       ring[i] <= wdata;
-            else if (i > thr)   ring[i] <= ring[(i == 0) ? 0 : i - 1];
+            if (ge[i] & ~gt[i]) ring[i] <= wdata;
+            else if (gt[i])     ring[i] <= ring[(i == 0) ? 0 : i - 1];
         end
         else if (shl) begin
-            if (i >= thr)
+            if (ge[i])
                 ring[i] <= k2 ? ring[(i + 2 > 255) ? 255 : i + 2]
                               : ring[(i + 1 > 255) ? 255 : i + 1];
         end
